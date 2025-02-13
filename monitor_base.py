@@ -8,7 +8,11 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7702711510:AAHwIAcx1z_Luv_
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6442285058")
 
 # Connect to Base network
-web3 = Web3(Web3.WebsocketProvider(ALCHEMY_WS_URL))
+try:
+    web3 = Web3(Web3.WebsocketProvider(ALCHEMY_WS_URL))
+except AttributeError:
+    # Fallback to LegacyWebSocketProvider if WebsocketProvider is not available
+    web3 = Web3(Web3.LegacyWebSocketProvider(ALCHEMY_WS_URL))
 
 # Function to send Telegram alerts
 def send_telegram_message(message):
