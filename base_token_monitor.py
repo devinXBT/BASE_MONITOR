@@ -3,7 +3,7 @@ import json
 import asyncio
 import websockets
 from web3 import Web3
-from web3.providers import WebsocketProvider  # Updated import
+from web3.providers.websocket import WebsocketProvider  # Correct import
 from telegram import Bot
 
 # Environment variables
@@ -99,6 +99,6 @@ async def notify_new_token(tx_hash):
     await telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
     print(f"Notification sent for token: {token_name} ({token_symbol})")
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     print("Starting Base Network Token Monitor...")
     asyncio.run(monitor_new_tokens())
