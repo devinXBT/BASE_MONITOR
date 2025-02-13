@@ -3,7 +3,7 @@ import json
 import asyncio
 import websockets
 from web3 import Web3
-from web3.providers.websocket import LegacyWebSocketProvider
+from web3.providers import WebsocketProvider  # Updated import
 from telegram import Bot
 
 # Environment variables
@@ -14,8 +14,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6442285058")
 # Initialize Telegram bot
 telegram_bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# Web3 instance with LegacyWebSocketProvider
-web3 = Web3(LegacyWebSocketProvider(ALCHEMY_WS_URL))
+# Web3 instance with WebsocketProvider
+web3 = Web3(WebsocketProvider(ALCHEMY_WS_URL))
 
 # ABI for ERC20 token contract (simplified)
 ERC20_ABI = json.loads('''
