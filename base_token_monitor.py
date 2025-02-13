@@ -10,7 +10,9 @@ ALCHEMY_WS_URL = os.getenv("ALCHEMY_WS_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-web3 = Web3(Web3.AsyncHTTPProvider(ALCHEMY_WS_URL))
+from web3.providers.websocket import WebsocketProvider
+
+web3 = Web3(WebsocketProvider(ALCHEMY_WS_URL))
 
 ERC20_CREATION_EVENT = "0x60806040"  # Common ERC-20 contract creation bytecode prefix
 
