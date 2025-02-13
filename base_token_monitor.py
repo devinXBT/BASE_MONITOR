@@ -25,7 +25,7 @@ def send_telegram_message(message):
 def monitor_new_blocks():
     print("🔍 Monitoring new blocks on Base Network...")
     
-    latest_block = web3.eth.blockNumber  # Start with the current block number
+    latest_block = web3.eth.block_Number  # Start with the current block number
     
     while True:
         try:
