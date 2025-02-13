@@ -24,7 +24,30 @@ def send_telegram_message(message):
 def monitor_new_contracts():
     print("🔍 Monitoring new token contracts on Base Network...")
     
-    subscription = web3.eth.filter("pending")  # Listen for pending transactions
+   def monitor_new_blocks():
+    print("🔍 Monitoring new blocks on Base Network...")
+    
+    latest_block = web3.eth.blockNumber  # Start with the current block number
+    
+    while True:
+        try:
+            # Get the latest block number
+            new_block = web3.eth.blockNumber
+            if new_block > latest_block:
+                block_data = web3.eth.get_block(new_block, full_transactions=True)
+                
+                for tx in block_data['transactions']:
+                    if tx['to'] is None:  # Contract creation transaction
+                        receipt = web3.eth.get_transaction_receipt(tx['hash'])
+                        if receipt and receipt.contractAddress:
+                            contract_address = receipt.contractAddress.lower()
+                            message = f"🚀 New Token Contract Detected!\n📍 Address: {contract_address}\n🔍 Explorer: https://basescan.org/address/{contract_address}"
+                            send_telegram_message(message)
+                            print(message)
+
+                latest_block = new_block  # Update to the latest block number
+        except Exception as e:
+            print(f"Error: {e}")
     
     while True:
         try:
