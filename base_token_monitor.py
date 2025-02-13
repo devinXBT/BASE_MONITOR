@@ -1,57 +1,103 @@
 import os
-import requests
-from dotenv import load_dotenv
+import json
+import asyncio
+import websockets
 from web3 import Web3
-import time
+from telegram import Bot
 
-# Load environment variables from .env file
-load_dotenv()
+# Environment variables
+ALCHEMY_WS_URL = os.getenv("ALCHEMY_WS_URL", "wss://base-mainnet.g.alchemy.com/v2/qKYxGNNH-dvlcKwc4ckHo6I9Hqtp4CI8")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7702711510:AAHwIAcx1z_Luv_-IjRaMWJq4UgTsekht2Y")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6442285058")
 
-# Alchemy WebSocket URL
-ALCHEMY_WS_URL = os.getenv("ALCHEMY_WS_URL")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# Initialize Telegram bot
+telegram_bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# Initialize Web3 with WebSocket connection
-web3 = Web3(Web3.LegacyWebSocketProvider(ALCHEMY_WS_URL))
+# Web3 instance
+web3 = Web3(Web3.WebsocketProvider(ALCHEMY_WS_URL))
 
-# Function to send a Telegram message
-def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-    requests.post(url, data=data)
+# ABI for ERC20 token contract (simplified)
+ERC20_ABI = json.loads('''
+[
+    {
+        "constant": true,
+        "inputs": [],
+        "name": "name",
+        "outputs": [{"name": "", "type": "string"}],
+        "type": "function"
+    },
+    {
+        "constant": true,
+        "inputs": [],
+        "name": "symbol",
+        "outputs": [{"name": "", "type": "string"}],
+        "type": "function"
+    },
+    {
+        "constant": true,
+        "inputs": [],
+        "name": "totalSupply",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "type": "function"
+    }
+]
+''')
 
-# Function to monitor new blocks on Base Network
-def monitor_new_blocks():
-    print("🔍 Monitoring new blocks on Base Network...")
-    
-    latest_block = web3.eth.block_Number  # Start with the current block number
-    
-    while True:
-        try:
-            # Get the latest block number
-            new_block = web3.eth.blockNumber
-            if new_block > latest_block:
-                # Get block data with transactions
-                block_data = web3.eth.get_block(new_block, full_transactions=True)
-                
-                # Check transactions in the block
-                for tx in block_data['transactions']:
-                    if tx['to'] is None:  # Contract creation transaction
-                        receipt = web3.eth.get_transaction_receipt(tx['hash'])
-                        if receipt and receipt.contractAddress:
-                            contract_address = receipt.contractAddress.lower()
-                            message = f"🚀 New Token Contract Detected!\n📍 Address: {contract_address}\n🔍 Explorer: https://basescan.org/address/{contract_address}"
-                            send_telegram_message(message)
-                            print(message)
+async def monitor_new_tokens():
+    """
+    Monitors new token creation events on the Base network.
+    """
+    print("Connecting to Alchemy WebSocket...")
+    async with websockets.connect(ALCHEMY_WS_URL) as ws:
+        # Subscribe to new pending transactions
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_subscribe",
+            "params": ["newPendingTransactions"]
+        }))
 
-                latest_block = new_block  # Update to the latest block number
-            
-            # Small delay to avoid hammering the node
-            time.sleep(5)
-        except Exception as e:
-            print(f"Error: {e}")
-            time.sleep(5)  # Delay on error to avoid infinite retries
+        # Listen for new transactions
+        while True:
+            response = await ws.recv()
+            data = json.loads(response)
+
+            if "params" in data:
+                tx_hash = data["params"]["result"]
+                print(f"New transaction detected: {tx_hash}")
+
+                # Get transaction details
+                tx = web3.eth.get_transaction(tx_hash)
+                if tx.to is None:  # Contract creation transaction
+                    print(f"New contract created: {tx_hash}")
+                    await notify_new_token(tx_hash)
+
+async def notify_new_token(tx_hash):
+    """
+    Sends a notification to Telegram about a new token.
+    """
+    # Get contract address (deployed contract)
+    receipt = web3.eth.get_transaction_receipt(tx_hash)
+    contract_address = receipt["contractAddress"]
+
+    # Get token details
+    token_contract = web3.eth.contract(address=contract_address, abi=ERC20_ABI)
+    token_name = token_contract.functions.name().call()
+    token_symbol = token_contract.functions.symbol().call()
+    token_supply = token_contract.functions.totalSupply().call()
+
+    # Send Telegram notification
+    message = (
+        f"🚨 New Token Created on Base Network 🚨\n\n"
+        f"Contract Address: {contract_address}\n"
+        f"Name: {token_name}\n"
+        f"Symbol: {token_symbol}\n"
+        f"Total Supply: {token_supply}\n"
+        f"Transaction Hash: {tx_hash}"
+    )
+    await telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    print(f"Notification sent for token: {token_name} ({token_symbol})")
 
 if __name__ == "__main__":
-    monitor_new_blocks()
+    print("Starting Base Network Token Monitor...")
+    asyncio.run(monitor_new_tokens())
