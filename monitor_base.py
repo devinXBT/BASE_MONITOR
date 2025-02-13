@@ -52,7 +52,7 @@ def listen_for_contracts():
 
 # Run the script
 if __name__ == "__main__":
-    if web3.isConnected():
+    if web3.is_Connected():
         listen_for_contracts()
     else:
         print("Failed to connect to Base network.")
