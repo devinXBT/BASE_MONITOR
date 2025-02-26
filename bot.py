@@ -46,7 +46,7 @@ def has_liquidity_on_uniswap(token_address):
 
 # Define the function to handle approve transactions
 def handle_approve_transaction(tx_hash):
-    tx = w3.eth.getTransaction(tx_hash)
+    tx = w3.eth.get_transaction(tx_hash)
     
     # Check if the method is 'approve' (0x095ea7b3)
     if tx['input'].startswith(approve_signature):
@@ -63,9 +63,12 @@ def handle_approve_transaction(tx_hash):
 def monitor_transactions():
     while True:
         # Monitor new blocks for transactions
-        latest_block = w3.eth.get_block('latest', full_transactions=True)
-        
-        for tx in latest_block['transactions']:
-            handle_approve_transaction(tx['hash'])
-        
+        latest_block = w3.eth.get_block('latest')  # Use get_block instead of getBlock
+
+        for tx_hash in latest_block['transactions']:
+            handle_approve_transaction(tx_hash)
+
         time.sleep(5)  # Delay to avoid spamming requests (adjust as needed)
+
+if __name__ == '__main__':
+    monitor_transactions()
