@@ -109,7 +109,7 @@ def process_transaction(tx, block_number):
             if len(log['topics']) > 0 and log['topics'][0].hex() == APPROVAL_EVENT_SIG:
                 token_address = Web3.to_checksum_address(log['address'])
                 from_address = Web3.to_checksum_address("0x" + log['topics'][1].hex()[26:])
-                spender = Web3.to_checksum_address("0x" + log['topics'][2].hex()[26:])  # Fixed syntax here
+                spender = Web3.to_checksum_address("0x" + log['topics'][2].hex()[26:])
                 amount = int(log['data'], 16)
                 if spender in UNISWAP_ROUTERS:
                     process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
@@ -147,28 +147,24 @@ def monitor_approvals():
         send_telegram_message("❌ Bot failed to connect to Base network!")
         return
 
-    print("Connected to Base network. Starting approval monitoring 20 blocks behind...")
+    print("Connected to Base network. Starting approval monitoring 6 blocks behind...")
     send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4, Universal)*")
 
-    last_processed_block = w3.eth.block_number - 20  # Start 20 blocks behind
+    last_processed_block = w3.eth.block_number - 6  # Start 6 blocks behind
 
     while True:
         try:
             latest_block = w3.eth.block_number
-            target_block = latest_block - 20  # Always stay 20 blocks behind
+            target_block = latest_block - 6  # Always stay 6 blocks behind
 
             if target_block > last_processed_block:
-                for block_num in range(last_processed_block + 1, target_block + 1):
-                    try:
-                        block = w3.eth.get_block(block_num, full_transactions=True)
-                        print(f"Scanning block {block_num} (20 blocks behind latest {latest_block}) with {len(block['transactions'])} txs")
-                        for tx in block['transactions']:
-                            process_transaction(tx, block_num)
-                    except Exception as e:
-                        print(f"Error scanning block {block_num}: {e}")
+                block = w3.eth.get_block(target_block, full_transactions=True)
+                print(f"Scanning block {target_block} (6 blocks behind latest {latest_block}) with {len(block['transactions'])} txs")
+                for tx in block['transactions']:
+                    process_transaction(tx, target_block)
                 last_processed_block = target_block
 
-            time.sleep(1)  # Poll every second
+            time.sleep(1)  # Poll every second to keep up
         except Exception as e:
             print(f"Error in monitoring loop: {e}")
             send_telegram_message(f"⚠️ *Bot Error:* {str(e)}")
