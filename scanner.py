@@ -109,27 +109,29 @@ def monitor_approvals():
         send_telegram_message("❌ Bot failed to connect to Base network!")
         return
 
-    print("Connected to Base network. Starting real-time approval monitoring...")
+    print("Connected to Base network. Starting approval monitoring 3 blocks behind...")
     send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4, Universal)*")
 
-    last_processed_block = w3.eth.block_number  # Start at the latest block
+    last_processed_block = w3.eth.block_number - 3  # Start 3 blocks behind
 
     while True:
         try:
             latest_block = w3.eth.block_number
-            print(f"Latest block: {latest_block}, Last processed: {last_processed_block}")
-            if latest_block > last_processed_block:
-                for block_num in range(last_processed_block + 1, latest_block + 1):
+            target_block = latest_block - 3  # Stay 3 blocks behind
+            print(f"Latest block: {latest_block}, Target block: {target_block}, Last processed: {last_processed_block}")
+
+            if target_block > last_processed_block:
+                for block_num in range(last_processed_block + 1, target_block + 1):
                     try:
                         block = w3.eth.get_block(block_num, full_transactions=True)
-                        print(f"Scanning block {block_num} with {len(block['transactions'])} txs")
+                        print(f"Scanning block {block_num} (3 blocks behind {latest_block}) with {len(block['transactions'])} txs")
                         for tx in block['transactions']:
                             process_transaction(tx, block_num)
                     except Exception as e:
                         print(f"Error scanning block {block_num}: {e}")
-                last_processed_block = latest_block
+                last_processed_block = target_block
             else:
-                print(f"No new blocks yet, waiting... (current: {latest_block})")
+                print(f"No new blocks to process yet, waiting... (target: {target_block})")
 
             time.sleep(1)  # Poll every second
         except Exception as e:
