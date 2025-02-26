@@ -1,8 +1,4 @@
-Below is the complete `scanner.py` file with added debugging output to help diagnose why it’s stuck at “Starting scanning from block: …”. I’ve incorporated the suggestions from our discussion, including better error handling and logging to pinpoint the issue. I’ve also used the environment variables you provided (though I’ll keep them in the explanation, not hardcoded in the code for security).
 
-### `scanner.py`
-
-```python
 import os
 import json
 import requests
@@ -121,50 +117,3 @@ if __name__ == "__main__":
     send_telegram_message("🔍 Scanner Bot Started")
     print("Bot initialized, starting scan...")
     scan_approvals()
-```
-
-### Your `.env` File
-
-Create a file named `.env` in the same directory as `scanner.py` with this content (using the values you provided):
-
-```
-ALCHEMY_BASE_RPC=https://base-mainnet.g.alchemy.com/v2/vLkhOi55lDoMp6pu2OFcOSD7TCW5rjo7
-BASESCAN_API_KEY=XXTNB48W9QYTZ3KKZNUZ9J6386GVV38RUJ
-TELEGRAM_BOT_TOKEN=7702711510:AAHwIAcx1z_Luv_-IjRaMWJq4UgTsekht2Y
-TELEGRAM_CHAT_ID=6442285058
-```
-
-### How to Run
-
-1. Save the code above as `scanner.py`.
-2. Save the `.env` file in the same directory.
-3. Install required packages if you haven’t:
-   
-   ```bash
-   pip install python-dotenv web3.py requests telebot
-   ```
-4. Run the script:
-   
-   ```bash
-   python scanner.py
-   ```
-
-### What to Expect
-
-- The script will print initial environment variable checks and Web3 connection status.
-- If it connects, it’ll print the starting block and begin the loop, logging each step (fetching blocks, processing transactions, etc.).
-- If it gets stuck, the debug output will show the last step it reached.
-
-### Diagnosing the Issue
-
-Since it’s stuck at “Starting scanning from block: 26897712”:
-
-- **Likely Culprit**: The next step after printing the starting block is fetching `w3.eth.block_number` again in the loop. If this fails or hangs, it won’t proceed.
-- **Output to Check**: Look for:
-  - “Web3 connection failed!” → RPC issue.
-  - “Fetching current block number…” but no follow-up → RPC call hanging.
-  - Any error messages after “General error in scan loop”.
-
-### Next Steps
-
-Run this version and share the output (everything after you start it). That’ll tell us exactly where it’s failing—whether it’s the Alchemy connection, Telegram, or something else. I’ll refine the fix once I see the logs!
