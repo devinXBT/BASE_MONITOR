@@ -36,7 +36,7 @@ def scan_approvals():
         try:
             block = w3.eth.get_block(latest_block, full_transactions=True)
             for tx in block.transactions:
-                if tx.to and tx.input.startswith("0x095ea7b3"):  # `approve()` function signature
+                if tx.to and tx.input.hex().startswith("0x095ea7b3"):  # `approve()` function signature
                     token_address = tx.to
                     spender = "0x" + tx.input[34:74]  # Extract spender address
                     amount = int(tx.input[74:], 16)  # Extract approved amount
