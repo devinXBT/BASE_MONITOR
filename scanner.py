@@ -35,24 +35,25 @@ def scan_approvals():
     latest_block = w3.eth.block_number
     while True:
         try:
-            # Fetch the current block
-            block = w3.eth.get_block(latest_block, full_transactions=True)
+            # Check if the block exists before trying to fetch it
+            if w3.eth.get_block(latest_block) is not None:
+                block = w3.eth.get_block(latest_block, full_transactions=True)
 
-            for tx in block.transactions:
-                if tx.to and tx.input.hex().startswith("0x095ea7b3"):  # `approve()` function signature
-                    token_address = tx.to
-                    spender = "0x" + tx.input[34:74]  # Extract spender address
-                    amount = int(tx.input[74:], 16)  # Extract approved amount
-                    
-                    token_info = get_token_info(token_address)
-                    if token_info:
-                        message = f"🚨 **Token Approval Detected** 🚨\n\n"
-                        message += f"**Token:** {token_info['name']} ({token_info['symbol']})\n"
-                        message += f"**Contract:** [{token_address}](https://basescan.org/address/{token_address})\n"
-                        message += f"**Approved By:** [{tx['from']}](https://basescan.org/address/{tx['from']})\n"
-                        message += f"**Approved To:** [{spender}](https://basescan.org/address/{spender})\n"
-                        message += f"**Amount:** {amount}\n"
-                        send_telegram_message(message)
+                for tx in block.transactions:
+                    if tx.to and tx.input.hex().startswith("0x095ea7b3"):  # `approve()` function signature
+                        token_address = tx.to
+                        spender = "0x" + tx.input[34:74]  # Extract spender address
+                        amount = int(tx.input[74:], 16)  # Extract approved amount
+                        
+                        token_info = get_token_info(token_address)
+                        if token_info:
+                            message = f"🚨 **Token Approval Detected** 🚨\n\n"
+                            message += f"**Token:** {token_info['name']} ({token_info['symbol']})\n"
+                            message += f"**Contract:** [{token_address}](https://basescan.org/address/{token_address})\n"
+                            message += f"**Approved By:** [{tx['from']}](https://basescan.org/address/{tx['from']})\n"
+                            message += f"**Approved To:** [{spender}](https://basescan.org/address/{spender})\n"
+                            message += f"**Amount:** {amount}\n"
+                            send_telegram_message(message)
 
             # Increment to check the next block
             latest_block += 1
