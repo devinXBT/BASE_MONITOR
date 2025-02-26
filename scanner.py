@@ -141,6 +141,24 @@ def process_approval(from_address, token_address, spender, amount, tx_hash, bloc
     send_telegram_message(message)
     print(f"Approval detected for {token_address} to {router_name} in block {block_number}{' by sniper bot' if is_sniper_bot else ''}")
 
+def recheck_last_50_blocks():
+    try:
+        latest_block = w3.eth.block_number
+        start_block = max(0, latest_block - 49)  # 50 blocks total, including latest
+        print(f"Silently rechecking last 50 blocks: {start_block} to {latest_block}...")
+
+        for block_num in range(start_block, latest_block + 1):
+            try:
+                block = w3.eth.get_block(block_num, full_transactions=True)
+                print(f"Scanning block {block_num} with {len(block['transactions'])} txs")
+                for tx in block['transactions']:
+                    process_transaction(tx, block_num)
+            except Exception as e:
+                print(f"Error scanning block {block_num}: {e}")
+        print("Finished rechecking last 50 blocks")
+    except Exception as e:
+        print(f"Error in recheck_last_50_blocks: {e}")
+
 def monitor_approvals():
     if not w3.is_connected():
         print("Failed to connect to Base network!")
@@ -149,6 +167,9 @@ def monitor_approvals():
 
     print("Connected to Base network. Starting real-time approval monitoring...")
     send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4, Universal)*")
+
+    # Silent recheck of last 50 blocks on startup
+    recheck_last_50_blocks()
 
     while True:
         try:
