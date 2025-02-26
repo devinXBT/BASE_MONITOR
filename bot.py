@@ -1,75 +1,74 @@
-import asyncio
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+import time
 from web3 import Web3
-import json
+from telegram import Bot
 
-# Config
-TELEGRAM_TOKEN = "7702711510:AAHwIAcx1z_Luv_-IjRaMWJq4UgTsekht2Y"  # From BotFather
-WALLET_ADDRESS = "0xB00B2011a83403583129Aee95812EaE8E483D2aE"
-PRIVATE_KEY = "0xe9df4273a5c7d7f4f3cd78e98495f61f446e368aca57d6fcb0e27fd5af9b3457"  # Keep this secure!
-BASE_RPC = "https://base-mainnet.g.alchemy.com/v2/vLkhOi55lDoMp6pu2OFcOSD7TCW5rjo7"
-ETHER_AMOUNT = "0.01"  # Amount to spend in ETH (adjustable)
+# Telegram Bot setup
+telegram_token = '7702711510:AAHwIAcx1z_Luv_-IjRaMWJq4UgTsekht2Y'  # Replace with your bot's token
+telegram_chat_id = '6442285058'  # Replace with your chat ID
+telegram_bot = Bot(token=telegram_token)
 
-# Web3 setup
-w3 = Web3(Web3.HTTPProvider(BASE_RPC))
-if not w3.is_connected():
-    raise Exception("Cannot connect to Base network")
+# Base network RPC URL (replace with actual RPC URL)
+base_rpc_url = 'https://base-mainnet.g.alchemy.com/v2/vLkhOi55lDoMp6pu2OFcOSD7TCW5rjo7'
+w3 = Web3(Web3.HTTPProvider(base_rpc_url))
 
-# Uniswap V2 Router on Base (example address, verify for Base)
-UNISWAP_ROUTER_ADDRESS = "0x4752ba5DB52D97D632c2bEB16d6fAC7bC4bC9b9d"  # Replace with Base's router
-with open("uniswap_router_abi.json", "r") as f:  # Get ABI from Uniswap docs or GitHub
-    UNISWAP_ABI = json.load(f)
-router = w3.eth.contract(address=UNISWAP_ROUTER_ADDRESS, abi=UNISWAP_ABI)
+# Uniswap V2 Factory contract address and method to get pairs (example address)
+uniswap_v2_factory_address = '0x5C69bEe701ef814a2B6a3EDD4B52bC2cD7B5b6C2'  # Uniswap V2 Factory address
+uniswap_v2_abi = '''[...]'''  # ABI for Uniswap V2 Factory (you need to add the full ABI here)
 
-# Bot commands
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Welcome! Use /snipe <token_address> to buy a token on Base.")
+# Uniswap V3 Factory contract address (example address)
+uniswap_v3_factory_address = '0x1F98431c8aD98523631AE4a59f2677bC3e2A1e5'  # Uniswap V3 Factory address
+uniswap_v3_abi = '''[...]'''  # ABI for Uniswap V3 Factory (you need to add the full ABI here)
 
-async def snipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Please provide a token address: /snipe <token_address>")
-        return
+# Signature for approve method (0x095ea7b3)
+approve_signature = '0x095ea7b3'
+
+# Define the function to send notifications to Telegram
+def notify_telegram(message):
+    telegram_bot.send_message(chat_id=telegram_chat_id, text=message)
+
+# Define the function to check liquidity on Uniswap V2 and V3
+def has_liquidity_on_uniswap(token_address):
+    # Check liquidity on Uniswap V2
+    uniswap_v2_factory = w3.eth.contract(address=uniswap_v2_factory_address, abi=uniswap_v2_abi)
+    pair_address = uniswap_v2_factory.functions.getPair(token_address, w3.toChecksumAddress(uniswap_v2_factory_address)).call()
+
+    if pair_address == '0x0000000000000000000000000000000000000000':
+        return False  # No pair found on Uniswap V2
     
-    token_address = context.args[0]
-    if not w3.is_address(token_address):
-        await update.message.reply_text("Invalid token address!")
-        return
+    # Check liquidity on Uniswap V3 (simplified for example purposes)
+    uniswap_v3_factory = w3.eth.contract(address=uniswap_v3_factory_address, abi=uniswap_v3_abi)
+    pool_address = uniswap_v3_factory.functions.getPool(token_address, w3.toChecksumAddress(uniswap_v3_factory_address), 3000).call()
 
-    try:
-        # Build transaction
-        amount_in = w3.to_wei(ETHER_AMOUNT, "ether")
-        path = [w3.to_checksum_address("0x4200000000000000000000000000000000000006"),  # WETH on Base
-                w3.to_checksum_address(token_address)]
-        deadline = int(w3.eth.get_block("latest")["timestamp"]) + 60 * 20  # 20 min deadline
+    if pool_address == '0x0000000000000000000000000000000000000000':
+        return False  # No pool found on Uniswap V3
 
-        tx = router.functions.swapExactETHForTokens(
-            0,  # Min amount out (adjust for slippage)
-            path,
-            w3.to_checksum_address(WALLET_ADDRESS),
-            deadline
-        ).build_transaction({
-            "from": WALLET_ADDRESS,
-            "value": amount_in,
-            "gas": 200000,
-            "gasPrice": w3.to_wei("1", "gwei"),  # Adjust based on Base gas
-            "nonce": w3.eth.get_transaction_count(WALLET_ADDRESS),
-        })
+    return True  # Liquidity exists on either Uniswap V2 or V3
 
-        # Sign and send
-        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-        await update.message.reply_text(f"Sniping token! Tx hash: {tx_hash.hex()}")
+# Define the function to handle approve transactions
+def handle_approve_transaction(tx_hash):
+    tx = w3.eth.getTransaction(tx_hash)
+    
+    # Check if the method is 'approve' (0x095ea7b3)
+    if tx['input'].startswith(approve_signature):
+        token_address = tx['to']
+        spender = '0x' + tx['input'][34:74]
+        amount = int(tx['input'][74:], 16)
 
-    except Exception as e:
-        await update.message.reply_text(f"Error: {str(e)}")
+        # Check if token has liquidity on Uniswap
+        if not has_liquidity_on_uniswap(token_address):
+            message = f"Token {token_address} approved for spending by {spender}. No liquidity on Uniswap yet!"
+            notify_telegram(message)
 
-# Main bot setup
-def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("snipe", snipe))
-    app.run_polling()
+# Define the function to monitor transactions
+def monitor_transactions():
+    while True:
+        # Monitor new blocks for transactions
+        latest_block = w3.eth.getBlock('latest', full_transactions=True)
+        
+        for tx in latest_block['transactions']:
+            handle_approve_transaction(tx['hash'])
+        
+        time.sleep(5)  # Delay to avoid spamming requests (adjust as needed)
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    monitor_transactions()
