@@ -53,8 +53,7 @@ UNISWAP_ROUTERS = {
 SNIPER_BOT_ADDRESSES = [
     Web3.to_checksum_address("0x1234567890abcdef1234567890abcdef12345678"),  # Placeholder 1
     Web3.to_checksum_address("0xabcdef1234567890abcdef1234567890abcdef12"),  # Placeholder 2
-    # Add real sniper bot addresses here, e.g., from Basescan labels or community sources
-    # Example: "0xB956D54E0f18F0b316873BE8A183f4D088dAfeF7" (from your tx, if confirmed as a sniper)
+    # Add real sniper bot addresses here
 ]
 
 def send_telegram_message(message):
@@ -173,8 +172,11 @@ def monitor_approvals():
     print("Connected to Base network. Starting approval monitoring...")
     send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4)*")
 
-    # Recheck past 20 blocks on startup
+    # Initial recheck on startup
     recheck_past_blocks(num_blocks=20)
+
+    block_counter = 0
+    last_checked_block = w3.eth.block_number
 
     while True:
         try:
@@ -184,6 +186,15 @@ def monitor_approvals():
 
             for tx in latest_block['transactions']:
                 process_transaction(tx, block_number)
+
+            # Increment block counter and check if 20 blocks have passed
+            block_counter += (block_number - last_checked_block)
+            last_checked_block = block_number
+
+            if block_counter >= 20:
+                print(f"20 blocks passed, initiating recheck...")
+                recheck_past_blocks(num_blocks=20)
+                block_counter = 0  # Reset counter after recheck
 
             time.sleep(1)  # Poll every second
         except Exception as e:
