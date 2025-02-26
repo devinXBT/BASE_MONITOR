@@ -58,7 +58,6 @@ def get_token_info(token_address):
         return None
 
 def has_liquidity(token_address, block_number=None):
-    """Check if the token has liquidity on Uniswap V2 at a specific block."""
     factory = w3.eth.contract(address=UNISWAP_V2_FACTORY, abi=[
         {"constant": True, "inputs": [{"name": "tokenA", "type": "address"}, {"name": "tokenB", "type": "address"}], 
          "name": "getPair", "outputs": [{"name": "", "type": "address"}], "type": "function"}
@@ -79,7 +78,7 @@ def has_liquidity(token_address, block_number=None):
         print(f"Token {token_address} has V2 liquidity at block {block_number}: {has_liq} (reserve: {reserve})")
         return has_liq
     except Exception as e:
-        print(f"Error checking V2 liquidity for {token_address}: {e}")
+        print(f"Error checking V2 liquidity for {token_address} at block {block_number}: {e}")
         return False
 
 def process_block(block_number):
@@ -92,7 +91,7 @@ def process_block(block_number):
         return False
 
     for tx in block.transactions:
-        if tx.to and tx.input.hex().startswith("0x095ea7b3"):  # approve() signature
+        if tx.to and tx.input.hex().startswith("0x095ea7b3"):
             token_address = tx.to
             spender = "0x" + tx.input[34:74]
             try:
@@ -102,7 +101,6 @@ def process_block(block_number):
                 print(f"Error parsing amount for tx {tx.hash.hex()}: {ex}")
                 continue
 
-            # Check if spender is a Uniswap contract
             uniswap_spenders = [
                 UNISWAP_V2_ROUTER.lower(),
                 UNISWAP_V3_ROUTER.lower(),
@@ -113,12 +111,10 @@ def process_block(block_number):
                 print(f"Spender {spender} is not a Uniswap contract, skipping")
                 continue
 
-            # Check liquidity at this block
             if has_liquidity(token_address, block_number):
                 print(f"Token {token_address} already has V2 liquidity at block {block_number}, skipping")
                 continue
 
-            # Fetch token info and send alert
             token_info = get_token_info(token_address)
             if token_info:
                 spender_version = {
@@ -137,7 +133,7 @@ def process_block(block_number):
                 message += f"**Note:** No liquidity detected on Uniswap V2 at block {block_number}"
                 send_telegram_message(message)
             else:
-                print(f"No token info available for {token_address}, skipping alert")
+                print(f"No token info for {token_address}, skipping alert")
     return True
 
 def scan_approvals(start_block=None):
@@ -181,5 +177,5 @@ if __name__ == "__main__":
     print(f"TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
 
     send_telegram_message("🔍 Uniswap Pre-Liquidity Scanner Bot Started (V2, V3, V4, Universal)")
-    print("Bot initialized, starting real-time scan...")
-    scan_approvals()  # Start from current block for real-time monitoring
+    print("Bot initialized, starting scan from block 13975865 for testing...")
+    scan_approvals(start_block=13975865)  # Start at your test block
