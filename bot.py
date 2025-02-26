@@ -5,6 +5,11 @@ from web3 import Web3
 from eth_account import Account
 import time
 import json
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -13,20 +18,41 @@ ALCHEMY_RPC = os.getenv("ALCHEMY_BASE_RPC")  # e.g., https://base-mainnet.g.alch
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-print(f"Loaded ALCHEMY_RPC: {ALCHEMY_RPC[:20]}...")
-print(f"Loaded TELEGRAM_BOT_TOKEN: {TELEGRAM_BOT_TOKEN[:5]}...")
-print(f"Loaded TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
+logger.info(f"Loaded ALCHEMY_RPC: {ALCHEMY_RPC[:20]}...")
+logger.info(f"Loaded TELEGRAM_BOT_TOKEN: {TELEGRAM_BOT_TOKEN[:5]}...")
+logger.info(f"Loaded TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
 
-# Initialize Web3 and Telegram bot
-w3 = Web3(Web3.HTTPProvider(ALCHEMY_RPC))
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+# Check environment variables
+if not all([ALCHEMY_RPC, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+    logger.error("Missing required environment variables!")
+    exit(1)
+
+# Initialize Web3
+try:
+    w3 = Web3(Web3.HTTPProvider(ALCHEMY_RPC))
+    if w3.is_connected():
+        logger.info("Successfully connected to Base network!")
+    else:
+        logger.error("Failed to connect to Base network!")
+        exit(1)
+except Exception as e:
+    logger.error(f"Web3 initialization error: {e}")
+    exit(1)
+
+# Initialize Telegram bot
+try:
+    bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+    logger.info("Telegram bot initialized successfully!")
+except Exception as e:
+    logger.error(f"Telegram bot initialization error: {e}")
+    exit(1)
 
 # Uniswap V2 contracts on Base
 UNISWAP_V2_FACTORY = Web3.to_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
 UNISWAP_V2_ROUTER = Web3.to_checksum_address("0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24")
 WETH = Web3.to_checksum_address("0x4200000000000000000000000000000000000006")
 
-# ABIs
+# ABIs (unchanged from previous)
 UNISWAP_V2_ROUTER_ABI = [
     {
         "constant": False,
@@ -89,14 +115,14 @@ ERC20_ABI = [
 
 # User wallets and sniping settings
 user_wallets = {}
-user_snipe_settings = {}  # {chat_id: {'eth_amount': wei, 'active': bool}}
+user_snipe_settings = {}
 
 def send_telegram_message(chat_id, message):
     try:
         bot.send_message(chat_id, message)
-        print(f"Sent message: {message[:50]}...")
+        logger.info(f"Sent message: {message[:50]}...")
     except Exception as e:
-        print(f"Telegram error: {e}")
+        logger.error(f"Telegram error: {e}")
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -240,7 +266,7 @@ def handle_snipe(message):
 def monitor_new_pairs(chat_id):
     factory = w3.eth.contract(address=UNISWAP_V2_FACTORY, abi=UNISWAP_V2_FACTORY_ABI)
     last_processed_block = w3.eth.block_number
-    print(f"Starting sniping at block: {last_processed_block}")
+    logger.info(f"Starting sniping at block: {last_processed_block}")
 
     while user_snipe_settings.get(chat_id, {}).get('active', False):
         try:
@@ -251,16 +277,15 @@ def monitor_new_pairs(chat_id):
                     token0 = event['args']['token0']
                     token1 = event['args']['token1']
                     pair = event['args']['pair']
-                    print(f"New pair detected: {token0} - {token1}, Pair: {pair}")
+                    logger.info(f"New pair detected: {token0} - {token1}, Pair: {pair}")
                     
-                    # Determine token to buy (not WETH)
                     token_to_buy = token1 if token0 == WETH else token0
                     snipe_token(chat_id, token_to_buy)
                 
                 last_processed_block = latest_block
-            time.sleep(1)  # Poll every second
+            time.sleep(1)
         except Exception as e:
-            print(f"Error in sniping loop: {e}")
+            logger.error(f"Error in sniping loop: {e}")
             send_telegram_message(chat_id, f"Snipe Error: {str(e)}")
             time.sleep(5)
 
@@ -278,8 +303,8 @@ def snipe_token(chat_id, token_address):
         ).build_transaction({
             'from': wallet['address'],
             'value': eth_amount_wei,
-            'gas': 250000,  # Higher gas for sniping
-            'gasPrice': w3.eth.gas_price * 2,  # Double gas price for speed
+            'gas': 250000,
+            'gasPrice': w3.eth.gas_price * 2,
             'nonce': w3.eth.get_transaction_count(wallet['address']),
             'chainId': 8453
         })
@@ -292,5 +317,5 @@ def snipe_token(chat_id, token_address):
 
 # Start bot polling
 if __name__ == "__main__":
-    print("Starting Sigma-like Bot...")
+    logger.info("Starting Sigma-like Bot...")
     bot.polling(none_stop=True)
