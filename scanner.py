@@ -109,7 +109,7 @@ def process_transaction(tx, block_number):
             if len(log['topics']) > 0 and log['topics'][0].hex() == APPROVAL_EVENT_SIG:
                 token_address = Web3.to_checksum_address(log['address'])
                 from_address = Web3.to_checksum_address("0x" + log['topics'][1].hex()[26:])
-                spender = Web3.to_checksum_address("0x" + log['topics'][2]?.hex()[26:])
+                spender = Web3.to_checksum_address("0x" + log['topics'][2].hex()[26:])  # Fixed syntax here
                 amount = int(log['data'], 16)
                 if spender in UNISWAP_ROUTERS:
                     process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
