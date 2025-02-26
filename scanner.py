@@ -12,6 +12,7 @@ ALCHEMY_RPC = os.getenv("ALCHEMY_BASE_RPC")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Initialize Web3 and Telegram bot
 w3 = Web3(Web3.HTTPProvider(ALCHEMY_RPC))
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
@@ -54,27 +55,33 @@ def get_token_details(token_address):
         name = contract.functions.name().call()
         return name, symbol
     except Exception as e:
-        print(f"Error fetching token details: {e}")
+        print(f"Error fetching token details for {token_address}: {e}")
         return "Unknown", "Unknown"
 
 def process_transaction(tx, block_number):
-    # Direct approve calls only (matching Basescan filter)
-    if tx.get('to') and tx.get('input'):
+    try:
+        if not tx.get('to') or not tx.get('input'):
+            print(f"Tx {tx['hash'].hex()} missing 'to' or 'input', skipping")
+            return
+
         input_data = tx['input'].hex()
-        if input_data.startswith(APPROVE_METHOD_SIG):
-            token_address = Web3.to_checksum_address(tx['to'])
-            spender = Web3.to_checksum_address("0x" + input_data[34:74])
-            amount = int(input_data[74:], 16)
-            from_address = Web3.to_checksum_address(tx['from'])
-            print(f"Detected approve call: token={token_address}, spender={spender}, from={from_address}, amount={amount}")
-            if spender in UNISWAP_ROUTERS:
-                process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
-            else:
-                print(f"Spender {spender} not in UNISWAP_ROUTERS, skipping")
-        else:
+        if not input_data.startswith(APPROVE_METHOD_SIG):
             print(f"Tx {tx['hash'].hex()} not an approve call (method: {input_data[:10]})")
-    else:
-        print(f"Tx {tx['hash'].hex()} has no 'to' or 'input', skipping")
+            return
+
+        token_address = Web3.to_checksum_address(tx['to'])
+        spender = Web3.to_checksum_address("0x" + input_data[34:74])
+        amount = int(input_data[74:], 16)
+        from_address = Web3.to_checksum_address(tx['from'])
+
+        print(f"Detected approve call: token={token_address}, spender={spender}, from={from_address}, amount={amount}")
+
+        if spender in UNISWAP_ROUTERS:
+            process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
+        else:
+            print(f"Spender {spender} not in UNISWAP_ROUTERS, skipping")
+    except Exception as e:
+        print(f"Error processing tx {tx['hash'].hex()}: {e}")
 
 def process_approval(from_address, token_address, spender, amount, tx_hash, block_number):
     is_sniper_bot = from_address in SNIPER_BOT_ADDRESSES
@@ -98,7 +105,7 @@ def process_approval(from_address, token_address, spender, amount, tx_hash, bloc
 
 def monitor_approvals():
     if not w3.is_connected():
-        print("Failed to connect to Base network!")
+        print("Failed to connect to Base network! Check ALCHEMY_BASE_RPC.")
         send_telegram_message("❌ Bot failed to connect to Base network!")
         return
 
@@ -110,16 +117,19 @@ def monitor_approvals():
     while True:
         try:
             latest_block = w3.eth.block_number
+            print(f"Latest block: {latest_block}, Last processed: {last_processed_block}")
             if latest_block > last_processed_block:
                 for block_num in range(last_processed_block + 1, latest_block + 1):
                     try:
                         block = w3.eth.get_block(block_num, full_transactions=True)
-                        print(f"Scanning block {block_num} (latest block) with {len(block['transactions'])} txs")
+                        print(f"Scanning block {block_num} with {len(block['transactions'])} txs")
                         for tx in block['transactions']:
                             process_transaction(tx, block_num)
                     except Exception as e:
                         print(f"Error scanning block {block_num}: {e}")
                 last_processed_block = latest_block
+            else:
+                print(f"No new blocks yet, waiting... (current: {latest_block})")
 
             time.sleep(1)  # Poll every second
         except Exception as e:
