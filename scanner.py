@@ -8,25 +8,21 @@ from hexbytes import HexBytes
 # Load environment variables
 load_dotenv()
 
-# Configuration from .env
-ALCHEMY_RPC = os.getenv("ALCHEMY_BASE_RPC")  # e.g., https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+ALCHEMY_RPC = os.getenv("ALCHEMY_BASE_RPC")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Initialize Web3 and Telegram bot
 w3 = Web3(Web3.HTTPProvider(ALCHEMY_RPC))
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# Uniswap contract addresses on Base
 UNISWAP_V2_FACTORY = Web3.to_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
 UNISWAP_V2_ROUTER = Web3.to_checksum_address("0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24")
 UNISWAP_V3_ROUTER = Web3.to_checksum_address("0x2626664c2603336E57B271c5C0b26F421741e481")
 UNISWAP_V4_POOL_MANAGER = Web3.to_checksum_address("0xC2aB7dD270D16e6C64Dc33fb99eD888aEdE5e623")
+UNISWAP_UNIVERSAL_ROUTER = Web3.to_checksum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
 
-# WETH address on Base
 WETH = Web3.to_checksum_address("0x4200000000000000000000000000000000000006")
 
-# Minimal ABI for ERC-20 and Pair contracts
 ERC20_ABI = [
     {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
     {"constant": True, "inputs": [], "name": "name", "outputs": [{"name": "", "type": "string"}], "type": "function"},
@@ -42,19 +38,19 @@ PAIR_ABI = [
     {"constant": True, "inputs": [], "name": "token1", "outputs": [{"name": "", "type": "address"}], "type": "function"}
 ]
 
-# Uniswap routers to monitor
 UNISWAP_ROUTERS = {
     UNISWAP_V2_ROUTER: "Uniswap V2 Router",
     UNISWAP_V3_ROUTER: "Uniswap V3 Router",
-    UNISWAP_V4_POOL_MANAGER: "Uniswap V4 Pool Manager"
+    UNISWAP_V4_POOL_MANAGER: "Uniswap V4 Pool Manager",
+    UNISWAP_UNIVERSAL_ROUTER: "Uniswap Universal Router"
 }
 
-# Famous sniper bot addresses to monitor (placeholders - replace with real addresses)
 SNIPER_BOT_ADDRESSES = [
-    Web3.to_checksum_address("0x1234567890abcdef1234567890abcdef12345678"),  # Placeholder 1
-    Web3.to_checksum_address("0xabcdef1234567890abcdef1234567890abcdef12"),  # Placeholder 2
-    # Add real sniper bot addresses here
+    Web3.to_checksum_address("0x1234567890abcdef1234567890abcdef12345678"),
+    Web3.to_checksum_address("0xabcdef1234567890abcdef1234567890abcdef12"),
 ]
+
+APPROVAL_EVENT_SIG = "0x8c5be1e5ea6b5a2e4b167f05063e32c8e8c9b0c951938c0e93e316b58312b805"
 
 def send_telegram_message(message):
     try:
@@ -74,7 +70,6 @@ def has_liquidity(token_address):
     pair_address = get_pair_address(token_address)
     if pair_address == "0x0000000000000000000000000000000000000000":
         return False
-    
     pair_contract = w3.eth.contract(address=pair_address, abi=PAIR_ABI)
     try:
         reserves = pair_contract.functions.getReserves().call()
@@ -95,41 +90,44 @@ def get_token_details(token_address):
         return "Unknown", "Unknown"
 
 def process_transaction(tx, block_number):
-    if not tx.get('to') or not tx.get('input'):
+    # Direct approve calls
+    if tx.get('to') and tx.get('input'):
+        input_data = tx['input'].hex()
+        if input_data.startswith("0x095ea7b3"):
+            token_address = Web3.to_checksum_address(tx['to'])
+            spender = Web3.to_checksum_address("0x" + input_data[34:74])
+            amount = int(input_data[74:], 16)
+            from_address = Web3.to_checksum_address(tx['from'])
+            if spender in UNISWAP_ROUTERS:
+                process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
+
+    # Approval events in logs
+    try:
+        receipt = w3.eth.get_transaction_receipt(tx['hash'])
+        for log in receipt['logs']:
+            if len(log['topics']) > 0 and log['topics'][0].hex() == APPROVAL_EVENT_SIG:
+                token_address = Web3.to_checksum_address(log['address'])
+                from_address = Web3.to_checksum_address("0x" + log['topics'][1].hex()[26:])
+                spender = Web3.to_checksum_address("0x" + log['topics'][2].hex()[26:])
+                amount = int(log['data'], 16)
+                if spender in UNISWAP_ROUTERS:
+                    process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
+    except Exception as e:
+        print(f"Error fetching receipt for tx {tx['hash'].hex()}: {e}")
+
+def process_approval(from_address, token_address, spender, amount, tx_hash, block_number):
+    if has_liquidity(token_address):
+        print(f"Tx {tx_hash}: Token {token_address} has liquidity, skipping")
         return
 
-    input_data = tx['input'].hex()
-    if not input_data.startswith("0x095ea7b3"):  # Approve function signature
-        return
-
-    # Parse approval details
-    token_address = Web3.to_checksum_address(tx['to'])
-    spender = Web3.to_checksum_address("0x" + input_data[34:74])
-    amount = int(input_data[74:], 16)
-    from_address = Web3.to_checksum_address(tx['from'])
-
-    # Check if spender is a Uniswap router
-    if spender not in UNISWAP_ROUTERS:
-        print(f"Tx {tx['hash'].hex()}: Spender {spender} not in Uniswap routers")
-        return
-
-    # Check if the 'from' address is a known sniper bot
     is_sniper_bot = from_address in SNIPER_BOT_ADDRESSES
     sniper_note = "⚠️ *Known Sniper Bot Detected* ⚠️" if is_sniper_bot else ""
-
-    # Skip if token already has liquidity
-    if has_liquidity(token_address):
-        print(f"Tx {tx['hash'].hex()}: Token {token_address} has liquidity, skipping")
-        return
-
-    # Get token details
     name, symbol = get_token_details(token_address)
     router_name = UNISWAP_ROUTERS[spender]
 
-    # Prepare and send alert
     message = (
         f"🚨 *New Token Approval Detected* 🚨\n\n"
-        f"*Tx Hash:* [{tx['hash'].hex()}](https://basescan.org/tx/{tx['hash'].hex()})\n"
+        f"*Tx Hash:* [{tx_hash}](https://basescan.org/tx/{tx_hash})\n"
         f"*Token:* {name} ({symbol})\n"
         f"*Contract:* [{token_address}](https://basescan.org/address/{token_address})\n"
         f"*Approved By:* [{from_address}](https://basescan.org/address/{from_address})\n"
@@ -163,6 +161,24 @@ def recheck_past_blocks(num_blocks=20):
         print(f"Error in recheck_past_blocks: {e}")
         send_telegram_message(f"⚠️ *Recheck Error:* {str(e)}")
 
+def scan_block_range(start_block, end_block):
+    try:
+        print(f"Scanning block range {start_block} to {end_block}...")
+        send_telegram_message(f"🔍 *Scanning block range {start_block} to {end_block}*")
+        for block_num in range(start_block, end_block + 1):
+            try:
+                block = w3.eth.get_block(block_num, full_transactions=True)
+                print(f"Scanning block {block_num} with {len(block['transactions'])} txs")
+                for tx in block['transactions']:
+                    process_transaction(tx, block_num)
+            except Exception as e:
+                print(f"Error scanning block {block_num}: {e}")
+        print("Finished scanning block range")
+        send_telegram_message(f"✅ *Finished scanning block range {start_block} to {end_block}*")
+    except Exception as e:
+        print(f"Error in scan_block_range: {e}")
+        send_telegram_message(f"⚠️ *Scan Error:* {str(e)}")
+
 def monitor_approvals():
     if not w3.is_connected():
         print("Failed to connect to Base network!")
@@ -170,10 +186,10 @@ def monitor_approvals():
         return
 
     print("Connected to Base network. Starting approval monitoring...")
-    send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4)*")
+    send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4, Universal)*")
 
-    # Initial recheck on startup
-    recheck_past_blocks(num_blocks=20)
+    # Initial recheck for last ~5 minutes (150 blocks)
+    recheck_past_blocks(num_blocks=150)
 
     block_counter = 0
     last_checked_block = w3.eth.block_number
@@ -187,20 +203,19 @@ def monitor_approvals():
             for tx in latest_block['transactions']:
                 process_transaction(tx, block_number)
 
-            # Increment block counter and check if 20 blocks have passed
             block_counter += (block_number - last_checked_block)
             last_checked_block = block_number
 
             if block_counter >= 20:
                 print(f"20 blocks passed, initiating recheck...")
                 recheck_past_blocks(num_blocks=20)
-                block_counter = 0  # Reset counter after recheck
+                block_counter = 0
 
-            time.sleep(1)  # Poll every second
+            time.sleep(1)
         except Exception as e:
             print(f"Error in monitoring loop: {e}")
             send_telegram_message(f"⚠️ *Bot Error:* {str(e)}")
-            time.sleep(5)  # Wait before retrying
+            time.sleep(5)
 
 if __name__ == "__main__":
     print("Starting Uniswap Pre-Liquidity Approval Monitor...")
