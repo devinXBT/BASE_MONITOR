@@ -63,12 +63,9 @@ def handle_approve_transaction(tx_hash):
 def monitor_transactions():
     while True:
         # Monitor new blocks for transactions
-        latest_block = w3.eth.getBlock('latest', full_transactions=True)
+        latest_block = w3.eth.get_block('latest', full_transactions=True)
         
         for tx in latest_block['transactions']:
             handle_approve_transaction(tx['hash'])
         
         time.sleep(5)  # Delay to avoid spamming requests (adjust as needed)
-
-if __name__ == '__main__':
-    monitor_transactions()
