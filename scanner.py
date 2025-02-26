@@ -4,6 +4,7 @@ import requests
 import telebot
 from web3 import Web3
 from dotenv import load_dotenv
+import time
 
 # Load environment variables
 load_dotenv()
@@ -34,7 +35,9 @@ def scan_approvals():
     latest_block = w3.eth.block_number
     while True:
         try:
+            # Fetch the current block
             block = w3.eth.get_block(latest_block, full_transactions=True)
+
             for tx in block.transactions:
                 if tx.to and tx.input.hex().startswith("0x095ea7b3"):  # `approve()` function signature
                     token_address = tx.to
@@ -50,10 +53,15 @@ def scan_approvals():
                         message += f"**Approved To:** [{spender}](https://basescan.org/address/{spender})\n"
                         message += f"**Amount:** {amount}\n"
                         send_telegram_message(message)
-            
+
+            # Increment to check the next block
             latest_block += 1
+
         except Exception as e:
             print(f"Error: {e}")
+            # If there’s an error fetching the block, wait and retry
+            latest_block += 1
+            time.sleep(1)  # Optional: Add a delay before retrying
 
 # Start scanning
 if __name__ == "__main__":
