@@ -109,7 +109,7 @@ def process_transaction(tx, block_number):
             if len(log['topics']) > 0 and log['topics'][0].hex() == APPROVAL_EVENT_SIG:
                 token_address = Web3.to_checksum_address(log['address'])
                 from_address = Web3.to_checksum_address("0x" + log['topics'][1].hex()[26:])
-                spender = Web3.to_checksum_address("0x" + log['topics'][2].hex()[26:])
+                spender = Web3.to_checksum_address("0x" + log['topics'][2]?.hex()[26:])
                 amount = int(log['data'], 16)
                 if spender in UNISWAP_ROUTERS:
                     process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
@@ -141,44 +141,32 @@ def process_approval(from_address, token_address, spender, amount, tx_hash, bloc
     send_telegram_message(message)
     print(f"Approval detected for {token_address} to {router_name} in block {block_number}{' by sniper bot' if is_sniper_bot else ''}")
 
-def recheck_last_50_blocks():
-    try:
-        latest_block = w3.eth.block_number
-        start_block = max(0, latest_block - 49)  # 50 blocks total, including latest
-        print(f"Silently rechecking last 50 blocks: {start_block} to {latest_block}...")
-
-        for block_num in range(start_block, latest_block + 1):
-            try:
-                block = w3.eth.get_block(block_num, full_transactions=True)
-                print(f"Scanning block {block_num} with {len(block['transactions'])} txs")
-                for tx in block['transactions']:
-                    process_transaction(tx, block_num)
-            except Exception as e:
-                print(f"Error scanning block {block_num}: {e}")
-        print("Finished rechecking last 50 blocks")
-    except Exception as e:
-        print(f"Error in recheck_last_50_blocks: {e}")
-
 def monitor_approvals():
     if not w3.is_connected():
         print("Failed to connect to Base network!")
         send_telegram_message("❌ Bot failed to connect to Base network!")
         return
 
-    print("Connected to Base network. Starting real-time approval monitoring...")
+    print("Connected to Base network. Starting approval monitoring 20 blocks behind...")
     send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4, Universal)*")
 
-    # Silent recheck of last 50 blocks on startup
-    recheck_last_50_blocks()
+    last_processed_block = w3.eth.block_number - 20  # Start 20 blocks behind
 
     while True:
         try:
-            latest_block = w3.eth.get_block('latest', full_transactions=True)
-            block_number = latest_block['number']
-            print(f"Scanning block {block_number} with {len(latest_block['transactions'])} txs")
+            latest_block = w3.eth.block_number
+            target_block = latest_block - 20  # Always stay 20 blocks behind
 
-            for tx in latest_block['transactions']:
-                process_transaction(tx, block_number)
+            if target_block > last_processed_block:
+                for block_num in range(last_processed_block + 1, target_block + 1):
+                    try:
+                        block = w3.eth.get_block(block_num, full_transactions=True)
+                        print(f"Scanning block {block_num} (20 blocks behind latest {latest_block}) with {len(block['transactions'])} txs")
+                        for tx in block['transactions']:
+                            process_transaction(tx, block_num)
+                    except Exception as e:
+                        print(f"Error scanning block {block_num}: {e}")
+                last_processed_block = target_block
 
             time.sleep(1)  # Poll every second
         except Exception as e:
