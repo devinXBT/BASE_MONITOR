@@ -48,6 +48,7 @@ UNISWAP_ROUTERS = {
 SNIPER_BOT_ADDRESSES = [
     Web3.to_checksum_address("0x1234567890abcdef1234567890abcdef12345678"),
     Web3.to_checksum_address("0xabcdef1234567890abcdef1234567890abcdef12"),
+    # Add real sniper bot addresses here
 ]
 
 APPROVAL_EVENT_SIG = "0x8c5be1e5ea6b5a2e4b167f05063e32c8e8c9b0c951938c0e93e316b58312b805"
@@ -140,59 +141,14 @@ def process_approval(from_address, token_address, spender, amount, tx_hash, bloc
     send_telegram_message(message)
     print(f"Approval detected for {token_address} to {router_name} in block {block_number}{' by sniper bot' if is_sniper_bot else ''}")
 
-def recheck_past_blocks(num_blocks=20):
-    try:
-        latest_block = w3.eth.block_number
-        start_block = max(0, latest_block - num_blocks + 1)
-        print(f"Rechecking blocks {start_block} to {latest_block}...")
-        send_telegram_message(f"🔍 *Rechecking past {num_blocks} blocks: {start_block} to {latest_block}*")
-
-        for block_num in range(start_block, latest_block + 1):
-            try:
-                block = w3.eth.get_block(block_num, full_transactions=True)
-                print(f"Scanning past block {block_num} with {len(block['transactions'])} txs")
-                for tx in block['transactions']:
-                    process_transaction(tx, block_num)
-            except Exception as e:
-                print(f"Error scanning block {block_num}: {e}")
-        print("Finished rechecking past blocks")
-        send_telegram_message("✅ *Finished rechecking past blocks*")
-    except Exception as e:
-        print(f"Error in recheck_past_blocks: {e}")
-        send_telegram_message(f"⚠️ *Recheck Error:* {str(e)}")
-
-def scan_block_range(start_block, end_block):
-    try:
-        print(f"Scanning block range {start_block} to {end_block}...")
-        send_telegram_message(f"🔍 *Scanning block range {start_block} to {end_block}*")
-        for block_num in range(start_block, end_block + 1):
-            try:
-                block = w3.eth.get_block(block_num, full_transactions=True)
-                print(f"Scanning block {block_num} with {len(block['transactions'])} txs")
-                for tx in block['transactions']:
-                    process_transaction(tx, block_num)
-            except Exception as e:
-                print(f"Error scanning block {block_num}: {e}")
-        print("Finished scanning block range")
-        send_telegram_message(f"✅ *Finished scanning block range {start_block} to {end_block}*")
-    except Exception as e:
-        print(f"Error in scan_block_range: {e}")
-        send_telegram_message(f"⚠️ *Scan Error:* {str(e)}")
-
 def monitor_approvals():
     if not w3.is_connected():
         print("Failed to connect to Base network!")
         send_telegram_message("❌ Bot failed to connect to Base network!")
         return
 
-    print("Connected to Base network. Starting approval monitoring...")
+    print("Connected to Base network. Starting real-time approval monitoring...")
     send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4, Universal)*")
-
-    # Initial recheck for last ~5 minutes (150 blocks)
-    recheck_past_blocks(num_blocks=150)
-
-    block_counter = 0
-    last_checked_block = w3.eth.block_number
 
     while True:
         try:
@@ -203,19 +159,11 @@ def monitor_approvals():
             for tx in latest_block['transactions']:
                 process_transaction(tx, block_number)
 
-            block_counter += (block_number - last_checked_block)
-            last_checked_block = block_number
-
-            if block_counter >= 20:
-                print(f"20 blocks passed, initiating recheck...")
-                recheck_past_blocks(num_blocks=20)
-                block_counter = 0
-
-            time.sleep(1)
+            time.sleep(1)  # Poll every second
         except Exception as e:
             print(f"Error in monitoring loop: {e}")
             send_telegram_message(f"⚠️ *Bot Error:* {str(e)}")
-            time.sleep(5)
+            time.sleep(5)  # Retry after delay
 
 if __name__ == "__main__":
     print("Starting Uniswap Pre-Liquidity Approval Monitor...")
