@@ -2,13 +2,14 @@ import os
 from dotenv import load_dotenv
 import telebot
 from web3 import Web3
+from eth_account import Account
 import time
-from hexbytes import HexBytes
+import json
 
 # Load environment variables
 load_dotenv()
 
-ALCHEMY_RPC = os.getenv("ALCHEMY_BASE_RPC")
+ALCHEMY_RPC = os.getenv("ALCHEMY_BASE_RPC")  # e.g., https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -20,83 +21,276 @@ print(f"Loaded TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
 w3 = Web3(Web3.HTTPProvider(ALCHEMY_RPC))
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-APPROVE_METHOD_SIG = "0x095ea7b3"
+# Uniswap V2 contracts on Base
+UNISWAP_V2_FACTORY = Web3.to_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
+UNISWAP_V2_ROUTER = Web3.to_checksum_address("0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24")
+WETH = Web3.to_checksum_address("0x4200000000000000000000000000000000000006")
 
-def send_telegram_message(message):
+# ABIs
+UNISWAP_V2_ROUTER_ABI = [
+    {
+        "constant": False,
+        "inputs": [
+            {"name": "amountIn", "type": "uint256"},
+            {"name": "amountOutMin", "type": "uint256"},
+            {"name": "path", "type": "address[]"},
+            {"name": "to", "type": "address"},
+            {"name": "deadline", "type": "uint256"}
+        ],
+        "name": "swapExactETHForTokens",
+        "outputs": [{"name": "amounts", "type": "uint256[]"}],
+        "payable": True,
+        "stateMutability": "payable",
+        "type": "function"
+    },
+    {
+        "constant": False,
+        "inputs": [
+            {"name": "amountIn", "type": "uint256"},
+            {"name": "amountOutMin", "type": "uint256"},
+            {"name": "path", "type": "address[]"},
+            {"name": "to", "type": "address"},
+            {"name": "deadline", "type": "uint256"}
+        ],
+        "name": "swapExactTokensForETH",
+        "outputs": [{"name": "amounts", "type": "uint256[]"}],
+        "payable": False,
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]
+
+UNISWAP_V2_FACTORY_ABI = [
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "token0", "type": "address"},
+            {"indexed": True, "name": "token1", "type": "address"},
+            {"indexed": False, "name": "pair", "type": "address"},
+            {"indexed": False, "name": "length", "type": "uint256"}
+        ],
+        "name": "PairCreated",
+        "type": "event"
+    }
+]
+
+ERC20_ABI = [
+    {
+        "constant": False,
+        "inputs": [
+            {"name": "_spender", "type": "address"},
+            {"name": "_value", "type": "uint256"}
+        ],
+        "name": "approve",
+        "outputs": [{"name": "", "type": "bool"}],
+        "type": "function"
+    }
+]
+
+# User wallets and sniping settings
+user_wallets = {}
+user_snipe_settings = {}  # {chat_id: {'eth_amount': wei, 'active': bool}}
+
+def send_telegram_message(chat_id, message):
     try:
-        bot.send_message(TELEGRAM_CHAT_ID, message)
-        print(f"Sent Telegram message: {message[:50]}...")
+        bot.send_message(chat_id, message)
+        print(f"Sent message: {message[:50]}...")
     except Exception as e:
         print(f"Telegram error: {e}")
 
-def process_transaction(tx, block_number):
+@bot.message_handler(commands=['start'])
+def handle_start(message):
+    chat_id = message.chat.id
+    send_telegram_message(chat_id, "Welcome to Sigma-like Bot!\nCommands:\n/newwallet - Create a new wallet\n/importwallet - Import a wallet\n/exportwallet - Export your wallet\n/buy - Buy tokens\n/sell - Sell tokens\n/snipe - Start auto-sniping (e.g., /snipe 0.1)")
+
+@bot.message_handler(commands=['newwallet'])
+def handle_new_wallet(message):
+    chat_id = message.chat.id
+    account = Account.create()
+    user_wallets[chat_id] = {'address': account.address, 'private_key': account.key.hex()}
+    send_telegram_message(chat_id, f"New wallet created!\nAddress: {account.address}\nPrivate Key: {account.key.hex()}\nSave this securely!")
+
+@bot.message_handler(commands=['importwallet'])
+def handle_import_wallet(message):
+    chat_id = message.chat.id
+    send_telegram_message(chat_id, "Please send your private key (e.g., 0xabc...).")
+    bot.register_next_step_handler(message, process_import_wallet)
+
+def process_import_wallet(message):
+    chat_id = message.chat.id
+    private_key = message.text.strip()
     try:
-        if not tx.get('to') or not tx.get('input'):
-            print(f"Tx {tx['hash'].hex()} missing 'to' or 'input', skipping")
-            return
-
-        input_data = tx['input'].hex()
-        print(f"Processing tx {tx['hash'].hex()}, method: {input_data[:10]}")
-
-        if input_data.startswith(APPROVE_METHOD_SIG):
-            token_address = Web3.to_checksum_address(tx['to'])
-            spender = Web3.to_checksum_address("0x" + input_data[34:74])
-            amount = int(input_data[74:], 16)
-            from_address = Web3.to_checksum_address(tx['from'])
-
-            print(f"DETECTED APPROVE: token={token_address}, spender={spender}, from={from_address}, amount={amount}")
-            report_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
-        else:
-            print(f"Tx {tx['hash'].hex()} not an approve call")
+        account = Account.from_key(private_key)
+        user_wallets[chat_id] = {'address': account.address, 'private_key': private_key}
+        send_telegram_message(chat_id, f"Wallet imported!\nAddress: {account.address}")
     except Exception as e:
-        print(f"Error processing tx {tx['hash'].hex()}: {e}")
+        send_telegram_message(chat_id, f"Error importing wallet: {str(e)}")
 
-def report_approval(from_address, token_address, spender, amount, tx_hash, block_number):
-    message = (
-        f"New Approve Tx Detected\n"
-        f"Tx Hash: {tx_hash}\n"
-        f"Token: {token_address}\n"
-        f"From: {from_address}\n"
-        f"Spender: {spender}\n"
-        f"Amount: {amount / 10**18:.2f} tokens\n"
-        f"Block: {block_number}"
-    )
-    send_telegram_message(message)
-    print(f"Reported approve tx: {tx_hash}")
+@bot.message_handler(commands=['exportwallet'])
+def handle_export_wallet(message):
+    chat_id = message.chat.id
+    if chat_id in user_wallets:
+        wallet = user_wallets[chat_id]
+        send_telegram_message(chat_id, f"Your wallet:\nAddress: {wallet['address']}\nPrivate Key: {wallet['private_key']}")
+    else:
+        send_telegram_message(chat_id, "No wallet found. Use /newwallet or /importwallet first.")
 
-def monitor_approvals():
-    if not w3.is_connected():
-        print("Failed to connect to Base network! Check ALCHEMY_BASE_RPC.")
-        send_telegram_message("Failed to connect to Base network!")
+@bot.message_handler(commands=['buy'])
+def handle_buy(message):
+    chat_id = message.chat.id
+    if chat_id not in user_wallets:
+        send_telegram_message(chat_id, "No wallet found. Use /newwallet or /importwallet first.")
         return
+    send_telegram_message(chat_id, "Enter token address and ETH amount (e.g., 0xTokenAddress 0.1)")
+    bot.register_next_step_handler(message, process_buy)
 
-    print("Successfully connected to Base network!")
-    send_telegram_message("Approve Transaction Monitor Started")
+def process_buy(message):
+    chat_id = message.chat.id
+    wallet = user_wallets[chat_id]
+    try:
+        token_address, eth_amount = message.text.split()
+        eth_amount_wei = int(float(eth_amount) * 10**18)
 
+        router = w3.eth.contract(address=UNISWAP_V2_ROUTER, abi=UNISWAP_V2_ROUTER_ABI)
+        tx = router.functions.swapExactETHForTokens(
+            0,
+            [WETH, Web3.to_checksum_address(token_address)],
+            wallet['address'],
+            int(time.time()) + 60
+        ).build_transaction({
+            'from': wallet['address'],
+            'value': eth_amount_wei,
+            'gas': 200000,
+            'gasPrice': w3.eth.gas_price,
+            'nonce': w3.eth.get_transaction_count(wallet['address']),
+            'chainId': 8453
+        })
+
+        signed_tx = w3.eth.account.sign_transaction(tx, wallet['private_key'])
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        send_telegram_message(chat_id, f"Buy tx sent! Hash: {tx_hash.hex()}")
+    except Exception as e:
+        send_telegram_message(chat_id, f"Error buying token: {str(e)}")
+
+@bot.message_handler(commands=['sell'])
+def handle_sell(message):
+    chat_id = message.chat.id
+    if chat_id not in user_wallets:
+        send_telegram_message(chat_id, "No wallet found. Use /newwallet or /importwallet first.")
+        return
+    send_telegram_message(chat_id, "Enter token address and amount (e.g., 0xTokenAddress 100)")
+    bot.register_next_step_handler(message, process_sell)
+
+def process_sell(message):
+    chat_id = message.chat.id
+    wallet = user_wallets[chat_id]
+    try:
+        token_address, amount = message.text.split()
+        amount_wei = int(float(amount) * 10**18)
+
+        token_contract = w3.eth.contract(address=Web3.to_checksum_address(token_address), abi=ERC20_ABI)
+        approve_tx = token_contract.functions.approve(UNISWAP_V2_ROUTER, amount_wei).build_transaction({
+            'from': wallet['address'],
+            'gas': 100000,
+            'gasPrice': w3.eth.gas_price,
+            'nonce': w3.eth.get_transaction_count(wallet['address']),
+            'chainId': 8453
+        })
+        signed_approve_tx = w3.eth.account.sign_transaction(approve_tx, wallet['private_key'])
+        approve_tx_hash = w3.eth.send_raw_transaction(signed_approve_tx.rawTransaction)
+        print(f"Approve tx sent: {approve_tx_hash.hex()}")
+        time.sleep(10)
+
+        router = w3.eth.contract(address=UNISWAP_V2_ROUTER, abi=UNISWAP_V2_ROUTER_ABI)
+        tx = router.functions.swapExactTokensForETH(
+            amount_wei,
+            0,
+            [Web3.to_checksum_address(token_address), WETH],
+            wallet['address'],
+            int(time.time()) + 60
+        ).build_transaction({
+            'from': wallet['address'],
+            'gas': 200000,
+            'gasPrice': w3.eth.gas_price,
+            'nonce': w3.eth.get_transaction_count(wallet['address']),
+            'chainId': 8453
+        })
+
+        signed_tx = w3.eth.account.sign_transaction(tx, wallet['private_key'])
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        send_telegram_message(chat_id, f"Sell tx sent! Hash: {tx_hash.hex()}")
+    except Exception as e:
+        send_telegram_message(chat_id, f"Error selling token: {str(e)}")
+
+@bot.message_handler(commands=['snipe'])
+def handle_snipe(message):
+    chat_id = message.chat.id
+    if chat_id not in user_wallets:
+        send_telegram_message(chat_id, "No wallet found. Use /newwallet or /importwallet first.")
+        return
+    try:
+        eth_amount = float(message.text.split()[1])  # e.g., /snipe 0.1
+        eth_amount_wei = int(eth_amount * 10**18)
+        user_snipe_settings[chat_id] = {'eth_amount': eth_amount_wei, 'active': True}
+        send_telegram_message(chat_id, f"Sniping started with {eth_amount} ETH!")
+        monitor_new_pairs(chat_id)
+    except Exception as e:
+        send_telegram_message(chat_id, "Usage: /snipe <ETH amount> (e.g., /snipe 0.1)")
+
+def monitor_new_pairs(chat_id):
+    factory = w3.eth.contract(address=UNISWAP_V2_FACTORY, abi=UNISWAP_V2_FACTORY_ABI)
     last_processed_block = w3.eth.block_number
-    print(f"Starting at block: {last_processed_block}")
+    print(f"Starting sniping at block: {last_processed_block}")
 
-    while True:
+    while user_snipe_settings.get(chat_id, {}).get('active', False):
         try:
             latest_block = w3.eth.block_number
-            print(f"Latest block: {latest_block}, Last processed: {last_processed_block}")
             if latest_block > last_processed_block:
-                for block_num in range(last_processed_block + 1, latest_block + 1):
-                    print(f"Fetching block {block_num}...")
-                    block = w3.eth.get_block(block_num, full_transactions=True)
-                    print(f"Scanning block {block_num} with {len(block['transactions'])} transactions")
-                    for tx in block['transactions']:
-                        process_transaction(tx, block_num)
+                events = factory.events.PairCreated.get_logs(fromBlock=last_processed_block + 1, toBlock=latest_block)
+                for event in events:
+                    token0 = event['args']['token0']
+                    token1 = event['args']['token1']
+                    pair = event['args']['pair']
+                    print(f"New pair detected: {token0} - {token1}, Pair: {pair}")
+                    
+                    # Determine token to buy (not WETH)
+                    token_to_buy = token1 if token0 == WETH else token0
+                    snipe_token(chat_id, token_to_buy)
+                
                 last_processed_block = latest_block
-            else:
-                print("No new blocks yet, waiting...")
-
             time.sleep(1)  # Poll every second
         except Exception as e:
-            print(f"Error in monitoring loop: {e}")
-            send_telegram_message(f"Bot Error: {str(e)}")
+            print(f"Error in sniping loop: {e}")
+            send_telegram_message(chat_id, f"Snipe Error: {str(e)}")
             time.sleep(5)
 
+def snipe_token(chat_id, token_address):
+    wallet = user_wallets[chat_id]
+    eth_amount_wei = user_snipe_settings[chat_id]['eth_amount']
+
+    try:
+        router = w3.eth.contract(address=UNISWAP_V2_ROUTER, abi=UNISWAP_V2_ROUTER_ABI)
+        tx = router.functions.swapExactETHForTokens(
+            0,
+            [WETH, Web3.to_checksum_address(token_address)],
+            wallet['address'],
+            int(time.time()) + 60
+        ).build_transaction({
+            'from': wallet['address'],
+            'value': eth_amount_wei,
+            'gas': 250000,  # Higher gas for sniping
+            'gasPrice': w3.eth.gas_price * 2,  # Double gas price for speed
+            'nonce': w3.eth.get_transaction_count(wallet['address']),
+            'chainId': 8453
+        })
+
+        signed_tx = w3.eth.account.sign_transaction(tx, wallet['private_key'])
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        send_telegram_message(chat_id, f"Sniped token {token_address}! Hash: {tx_hash.hex()}")
+    except Exception as e:
+        send_telegram_message(chat_id, f"Error sniping token {token_address}: {str(e)}")
+
+# Start bot polling
 if __name__ == "__main__":
-    print("Starting Approve Transaction Monitor...")
-    monitor_approvals()
+    print("Starting Sigma-like Bot...")
+    bot.polling(none_stop=True)
