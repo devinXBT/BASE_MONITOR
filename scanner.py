@@ -35,22 +35,7 @@ def scan_approvals():
     latest_block = w3.eth.block_number
     while True:
         try:
-            # Attempt to fetch the current block with retries
-            block = None
-            retries = 3
-            while retries > 0:
-                try:
-                    block = w3.eth.get_block(latest_block, full_transactions=True)
-                    break  # Break if successful
-                except Exception as e:
-                    print(f"Error fetching block {latest_block}: {e}")
-                    retries -= 1
-                    time.sleep(1)  # Wait before retrying
-
-            if block is None:
-                print(f"Block {latest_block} not found after retries. Skipping to next block.")
-                latest_block += 1
-                continue  # Skip to the next block if it cannot be fetched
+            block = w3.eth.get_block(latest_block, full_transactions=True)
 
             for tx in block.transactions:
                 if tx.to and tx.input.hex().startswith("0x095ea7b3"):  # `approve()` function signature
@@ -72,10 +57,14 @@ def scan_approvals():
             latest_block += 1
 
         except Exception as e:
-            print(f"General error: {e}")
-            # Handle any other errors
-            latest_block += 1
-            time.sleep(1)  # Optional: Add a delay before retrying
+            print(f"Error fetching block {latest_block}: {e}")
+            latest_block += 1  # Move to the next block if the current one cannot be fetched
+            
+            # Wait a bit before trying to fetch the next block to avoid overwhelming the node
+            time.sleep(1)
+
+            # Check for the latest block to ensure we are in sync
+            latest_block = w3.eth.block_number  # Refresh the latest block number
 
 # Start scanning
 if __name__ == "__main__":
