@@ -99,8 +99,11 @@ def process_transaction(tx, block_number):
             spender = Web3.to_checksum_address("0x" + input_data[34:74])
             amount = int(input_data[74:], 16)
             from_address = Web3.to_checksum_address(tx['from'])
+            print(f"Detected approve call: token={token_address}, spender={spender}, from={from_address}")
             if spender in UNISWAP_ROUTERS:
                 process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
+            else:
+                print(f"Spender {spender} not in UNISWAP_ROUTERS, skipping")
 
     # Approval events in logs
     try:
@@ -111,16 +114,18 @@ def process_transaction(tx, block_number):
                 from_address = Web3.to_checksum_address("0x" + log['topics'][1].hex()[26:])
                 spender = Web3.to_checksum_address("0x" + log['topics'][2].hex()[26:])
                 amount = int(log['data'], 16)
+                print(f"Detected approval event: token={token_address}, spender={spender}, from={from_address}")
                 if spender in UNISWAP_ROUTERS:
                     process_approval(from_address, token_address, spender, amount, tx['hash'].hex(), block_number)
+                else:
+                    print(f"Spender {spender} not in UNISWAP_ROUTERS, skipping")
     except Exception as e:
         print(f"Error fetching receipt for tx {tx['hash'].hex()}: {e}")
 
 def process_approval(from_address, token_address, spender, amount, tx_hash, block_number):
-    if has_liquidity(token_address):
-        print(f"Tx {tx_hash}: Token {token_address} has liquidity, skipping")
-        return
-
+    # Removed liquidity check to catch all approvals
+    has_liq = has_liquidity(token_address)
+    liquidity_note = "No liquidity on Uniswap V2 yet" if not has_liq else "Has liquidity on Uniswap V2"
     is_sniper_bot = from_address in SNIPER_BOT_ADDRESSES
     sniper_note = "⚠️ *Known Sniper Bot Detected* ⚠️" if is_sniper_bot else ""
     name, symbol = get_token_details(token_address)
@@ -134,7 +139,7 @@ def process_approval(from_address, token_address, spender, amount, tx_hash, bloc
         f"*Approved By:* [{from_address}](https://basescan.org/address/{from_address})\n"
         f"*Approved To:* [{spender}](https://basescan.org/address/{spender}) ({router_name})\n"
         f"*Amount:* {amount / 10**18:.2f} tokens\n"
-        f"*Status:* No liquidity on Uniswap V2 yet\n"
+        f"*Status:* {liquidity_note}\n"
         f"*Block:* {block_number}\n"
         f"{sniper_note}"
     )
@@ -147,33 +152,30 @@ def monitor_approvals():
         send_telegram_message("❌ Bot failed to connect to Base network!")
         return
 
-    print("Connected to Base network. Starting approval monitoring 6 blocks behind...")
+    print("Connected to Base network. Starting real-time approval monitoring...")
     send_telegram_message("✅ *Uniswap Pre-Liquidity Approval Monitor Started (V2, V3, V4, Universal)*")
 
-    last_processed_block = w3.eth.block_number - 6  # Start 6 blocks behind
+    last_processed_block = w3.eth.block_number  # Start at the latest block
 
     while True:
         try:
             latest_block = w3.eth.block_number
-            target_block = latest_block - 6  # Always stay 6 blocks behind
-
-            if target_block > last_processed_block:
-                # Process all blocks from last_processed_block + 1 to target_block
-                for block_num in range(last_processed_block + 1, target_block + 1):
+            if latest_block > last_processed_block:
+                for block_num in range(last_processed_block + 1, latest_block + 1):
                     try:
                         block = w3.eth.get_block(block_num, full_transactions=True)
-                        print(f"Scanning block {block_num} (6 blocks behind latest {latest_block}) with {len(block['transactions'])} txs")
+                        print(f"Scanning block {block_num} (latest block) with {len(block['transactions'])} txs")
                         for tx in block['transactions']:
                             process_transaction(tx, block_num)
                     except Exception as e:
                         print(f"Error scanning block {block_num}: {e}")
-                last_processed_block = target_block
+                last_processed_block = latest_block
 
-            time.sleep(1)  # Poll every second to keep up
+            time.sleep(1)  # Poll every second
         except Exception as e:
             print(f"Error in monitoring loop: {e}")
             send_telegram_message(f"⚠️ *Bot Error:* {str(e)}")
-            time.sleep(5)  # Retry after delay
+            time.sleep(5)
 
 if __name__ == "__main__":
     print("Starting Uniswap Pre-Liquidity Approval Monitor...")
